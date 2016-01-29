@@ -17,8 +17,7 @@ Usage example:
             super().__init__()
             _qapp.setup_ui_from_design(self, 'design.ui', 'res')
             self.ui.xxx
-            if _qapp.setting.has_frame_state(*SETTING_STR):
-                _qapp.setting.restore_frame_state(self, *SETTING_STR)
+            _qapp.setting.restore_frame_state(self, *SETTING_STR)
         def closeEvent(self, e):
             _qapp.setting.save_frame_state(self, *SETTING_STR)
             super().closeEvent(e)
@@ -70,6 +69,11 @@ class Application(QApplication):
       NOET _show_msg_with_info() below 
     """
     
+    def __init__(self, *argc):
+        super(Application, self).__init__(*argc)
+        self._main_window = None
+        self._interactive_msg = True
+    
     @QtCore.pyqtSlot(object, object, object, object)
     def _show_message(self, icon, title, info, msg):
         # Let our app know the situation.
@@ -87,15 +91,12 @@ class Application(QApplication):
 
 # Unique application instance
 qapp = Application(sys.argv)
-qapp._main_window = None
-
-_interactive_msg = True
 
 def exec_(main_win=None, interactive_msg=True):
     """
     Use interactive_msg=False to prevent appearing of dialog UI for messages.
     """
-    qapp._main_window, _interactive_msg = main_win, interactive_msg
+    qapp._main_window, qapp._interactive_msg = main_win, interactive_msg
     sys.exit(qapp.exec_())
 
 
@@ -157,21 +158,29 @@ class setting(object):
     def contains(key, org, app=''):
         return QtCore.QSettings(org, app).contains(key)
     
-    _FG, _FS = 'frame/geometry', 'frame/state'
     @staticmethod
     def has_frame_state(org, app=''):
         return all(setting.contains(x, org, app) for x in [setting._FG, setting._FS])
     @staticmethod
-    def restore_frame_state(frame, org, app='', _default=QtCore.QByteArray()):
-        qs = QtCore.QSettings(org, app)
-        fg, fs = qs.value(setting._FG, _default), qs.value(setting._FS, _default)
-        frame.restoreGeometry(fg)
-        frame.restoreState(fs)
-    @staticmethod    
-    def save_frame_state(frame, org, app=''):
-        qs = QtCore.QSettings(org, app)
-        qs.setValue(setting._FG, frame.saveGeometry())
-        qs.setValue(setting._FS, frame.saveState())
+    def restore_widget_geom(w, key, org, app='', _d=QtCore.QByteArray()):
+        w.restoreGeometry(QtCore.QSettings(org, app).value(key, _d))
+    @staticmethod
+    def save_widget_geom(w, key, org, app=''):
+        QtCore.QSettings(org, app).setValue(key, w.saveGeometry())
+    @staticmethod
+    def restore_window_stat(w, key, org, app='', _d=QtCore.QByteArray()):
+        w.restoreState(QtCore.QSettings(org, app).value(key, _d))
+    @staticmethod
+    def save_window_stat(w, key, org, app=''):
+        QtCore.QSettings(org, app).setValue(key, w.saveState())
+    @staticmethod
+    def restore_frame_state(w, org, app=''):
+        setting.restore_widget_geom(w, 'frame/geometry', org, app)
+        setting.restore_window_stat(w, 'frame/state', org, app)
+    @staticmethod
+    def save_frame_state(w, org, app=''):
+        setting.save_widget_geom(w, 'frame/geometry', org, app)
+        setting.save_window_stat(w, 'frame/state', org, app)
 
 
 def install_message_hooks():
@@ -188,7 +197,7 @@ def install_message_hooks():
         #     because it does work for Qt threads.
         #   NOTE Sometimes (maybe at the end of process?) qapp becomes None,
         #     which is very surprising and strange, so we check it.
-        if _interactive_msg and qapp:
+        if qapp and qapp._interactive_msg:
             # Get connection type to invoke app's slot. When calling object lives
             #   in different thread than app, it will be BlockingQueuedConnection
             #   and, as a result, the calling thread is suspended until message
