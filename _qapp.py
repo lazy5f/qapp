@@ -159,9 +159,6 @@ class setting(object):
         return QtCore.QSettings(org, app).contains(key)
     
     @staticmethod
-    def has_frame_state(org, app=''):
-        return all(setting.contains(x, org, app) for x in [setting._FG, setting._FS])
-    @staticmethod
     def restore_widget_geom(w, key, org, app='', _d=QtCore.QByteArray()):
         w.restoreGeometry(QtCore.QSettings(org, app).value(key, _d))
     @staticmethod
