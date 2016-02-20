@@ -10,27 +10,27 @@ Usage example:
     
     from PyQt4 import QtGui
     
-    SETTING_STR = ('org', 'app')
-    
     class MainFrame(QtGui.QMainWindow)
+        SETTING_STR = ('org', 'app')
         def __init__(self):
             super().__init__()
             _qapp.setup_ui_from_design(self, 'design.ui', 'res')
             self.ui.xxx
-            _qapp.setting.restore_frame_state(self, *SETTING_STR)
+            _qapp.setting.restore_frame_state(self, *self.SETTING_STR)
         def closeEvent(self, e):
-            _qapp.setting.save_frame_state(self, *SETTING_STR)
+            _qapp.setting.save_frame_state(self, *self.SETTING_STR)
             super().closeEvent(e)
         def on_open(self):
-            with _qapp.setting('last-open-file', '', *SETTING_STR) as lof:
+            with _qapp.setting('last-open-file', '', *self.SETTING_STR) as lof:
                 args = [None, 'Choose File', lof.value, '*.xxx']
                 path, _ = QtWidgets.QFileDialog.getOpenFileName(*args)  # Qt5
                 if not path:
                     return
                 lof.value = path
         def on_create_multiple_widget(self):
-            ui_design = load_ui_design('xxx.ui', 'yyy')
-            w1, w2 = ui_design(self), ui_design(self)
+            with _qapp.hourglass():
+                ui_design = load_ui_design('xxx.ui', 'yyy')
+                w1, w2 = ui_design(self), ui_design(self)
         def show_message(self, title, msg):
             _qapp.msg_info(self, title, msg)  # C.f. NOTE below.
     
@@ -178,6 +178,27 @@ class setting(object):
     def save_frame_state(w, org, app=''):
         setting.save_widget_geom(w, 'frame/geometry', org, app)
         setting.save_window_stat(w, 'frame/state', org, app)
+
+
+class hourglass(object):
+    
+    def __init__(self, widget=None):
+        self.widget = widget
+    
+    def __enter__(self):
+        if self.widget:
+            # TODO Check if correct approach.
+            self.old_cursor = self.widget.cursor()
+            self.widget.setCursor(Qt.WaitCursor)
+        else:
+            QApplication.setOverrideCursor(Qt.WaitCursor)
+        return self
+    
+    def __exit__(self, exc_type, exc_value, traceback):
+        if self.widget:
+            self.widget.setCursor(self.old_cursor)
+        else:
+            QApplication.restoreOverrideCursor()
 
 
 def install_message_hooks():
