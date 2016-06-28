@@ -43,8 +43,8 @@ TODO Hooking exception at Python secondary threads?
 
 import sys, os, traceback
 
-# Set to use QVariant version 2. (NOTE This is only needed for Python v2 but is
-#   harmless for Python v3.) If this is not set, code should be like as follows:
+# Set to use QVariant version 2. (NOTE This is only needed for Python 2 but is
+#   harmless for Python 3.) If this is not set, code should be like as follows:
 #     x = QtCore.QSettings(org, app).value(key, default)
 #     if _v__qt4:
 #         x = x.toPyObject()
@@ -69,10 +69,17 @@ class Application(QApplication):
       NOET _show_msg_with_info() below 
     """
     
+    sig_call_soon = QtCore.pyqtSignal(object, object)
+    
     def __init__(self, *argc):
         super(Application, self).__init__(*argc)
         self._main_window = None
         self._interactive_msg = True
+        self.sig_call_soon.connect(self._invoke_function)
+    
+    @QtCore.pyqtSlot(object, object)
+    def _invoke_function(self, callback, args):
+        callback(*args)
     
     @QtCore.pyqtSlot(object, object, object, object)
     def _show_message(self, icon, title, info, msg):
@@ -98,6 +105,10 @@ def exec_(main_win=None, interactive_msg=True):
     """
     qapp._main_window, qapp._interactive_msg = main_win, interactive_msg
     sys.exit(qapp.exec_())
+
+
+def call_soon(callback, *args):
+    qapp.sig_call_soon.emit(callback, args)
 
 
 # Shortcut for displaying message dialogs.
