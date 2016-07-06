@@ -79,7 +79,10 @@ class Application(QApplication):
     
     @QtCore.pyqtSlot(object, object)
     def _invoke_function(self, callback, args):
-        callback(*args)
+        try:
+            callback(*args)
+        except StopIteration:
+            pass
     
     @QtCore.pyqtSlot(object, object, object, object)
     def _show_message(self, icon, title, info, msg):
