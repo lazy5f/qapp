@@ -50,6 +50,10 @@ import sys, os, traceback
 #         x = x.toPyObject()
 import sip; sip.setapi('QVariant', 2)
 
+# TODO Is this proper way of supporting Ctrl-C?
+import signal
+signal.signal(signal.SIGINT, signal.SIG_DFL)
+
 try:
     from PyQt4 import QtCore, uic
     from PyQt4.QtCore import Qt
