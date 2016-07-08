@@ -4,7 +4,7 @@ Helper for using PyQt4/5 (by byunghyun.ha@gmail.com)
   When imported, Python exceptions and Qt messages will be hooked and displayed
     using Qt message box.
 
-Usage example:
+Usage example:  TODO!!!! Update!!!
 
     import _qapp  # This should be first that other PyQt import
     
@@ -65,6 +65,11 @@ except ImportError:
     from PyQt5.QtWidgets import QApplication, QMessageBox
     _qt_version = 'PyQt5'
 
+PY34 = sys.version_info >= (3, 4)
+
+if PY34:
+    from asyncio import iscoroutine
+
 
 class Application(QApplication):
     """
@@ -116,6 +121,68 @@ def exec_(main_win=None, interactive_msg=True):
 
 def call_soon(callback, *args):
     qapp.sig_call_soon.emit(callback, args)
+
+
+if PY34:
+    class Promise:
+        """
+        Promise
+        
+        TODO thread synchronization between resolve() and then()
+        """
+        
+        NO_RESULT = object()
+        
+        def __init__(self, func=None):
+            self._callback = None
+            self._result = Promise.NO_RESULT
+            if func:
+                call_soon(func, self.resolve)
+        
+        def resolve(self, result):
+            assert self._result is Promise.NO_RESULT  # TODO Handle repetition.
+            self._result = result
+            # Call callback.
+            if self._callback:
+                call_soon(self._callback, result)
+        
+        def then(self, callback):
+            assert self._callback is None  # TODO Handle.
+            self._callback = callback
+            if self._result is not Promise.NO_RESULT:
+                call_soon(self._callback, self._result)
+        
+        def __await__(self):
+            yield self
+            assert self._result is not Promise.NO_RESULT
+            return self._result
+
+    class Task(Promise):
+    
+        def __init__(self, coro):
+            assert iscoroutine(coro), repr(coro)
+            super().__init__()
+            self._coro = coro
+            call_soon(self._wakeup)
+        
+        def _wakeup(self, _result=None):
+            try:
+                p = self._coro.send(None)
+            except StopIteration as exc:
+                self.resolve(exc.value)
+            else:
+                if isinstance(p, Promise):
+                    p.then(self._wakeup)
+                else:
+                    assert False
+
+    def create_task(coro):
+        return Task(coro)
+    
+    def cy_public_async(fn):
+        def _wrapper(self, *args, **kwds):
+            create_task(fn(self, *args, **kwds))
+        return _wrapper
 
 
 # Shortcut for displaying message dialogs.
