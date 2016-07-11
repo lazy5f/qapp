@@ -43,12 +43,15 @@ TODO Hooking exception at Python secondary threads?
 
 import sys, os, traceback
 
-# Set to use QVariant version 2. (NOTE This is only needed for Python 2 but is
-#   harmless for Python 3.) If this is not set, code should be like as follows:
-#     x = QtCore.QSettings(org, app).value(key, default)
-#     if _v__qt4:
-#         x = x.toPyObject()
-import sip; sip.setapi('QVariant', 2)
+if sys.version_info < (3, 0):  # Python 2
+    """
+    Set to use QVariant version 2. If not, code should be like as follows:
+        x = QtCore.QSettings(org, app).value(key, default)
+        if _qt_version == 'PyQt4':
+            x = x.toPyObject()
+    NOTE This should be earlier than any PyQt import.
+    """
+    import sip; sip.setapi('QVariant', 2)
 
 # TODO Is this proper way of supporting Ctrl-C?
 import signal
@@ -65,10 +68,9 @@ except ImportError:
     from PyQt5.QtWidgets import QApplication, QMessageBox
     _qt_version = 'PyQt5'
 
-PY34 = sys.version_info >= (3, 4)
 
-if PY34:
-    from asyncio import iscoroutine
+# This is for preventing warning message: QWindowsWindow::setGeometry: Unable...
+QT5_WINDOWS_IGNORE_SETGEOMETRY_WARNING = True
 
 
 class Application(QApplication):
@@ -123,7 +125,9 @@ def call_soon(callback, *args):
     qapp.sig_call_soon.emit(callback, args)
 
 
-if PY34:
+if sys.version_info >= (3, 4):  # Python 3.4
+    from asyncio import iscoroutine
+
     class Promise:
         """
         Promise
@@ -332,25 +336,28 @@ def install_message_hooks():
     #   to QtCriticalMsg and there is no way to distinguish them at this moment.
     #   Yet, I don't know which one is better to be displayed to users.)
     if _qt_version == 'PyQt4':
+        _TI = {QtCore.QtDebugMsg:    ('Debug',    QMessageBox.Information),
+               QtCore.QtWarningMsg:  ('Warning',  QMessageBox.Warning),
+               QtCore.QtCriticalMsg: ('Critical', QMessageBox.Critical),
+               QtCore.QtFatalMsg:    ('Fatal',    QMessageBox.Critical)}
         def _qt_msg_hook(mtype, msg):
-            _TI = {QtCore.QtDebugMsg:    ('Debug',    QMessageBox.Information),
-                   QtCore.QtWarningMsg:  ('Warning',  QMessageBox.Warning),
-                   QtCore.QtCriticalMsg: ('Critical', QMessageBox.Critical),
-                   QtCore.QtFatalMsg:    ('Fatal',    QMessageBox.Critical)}
             tstr, icon = _TI[mtype]
             info = traceback.format_stack()
             if len(info) > 1:
                 info.insert(0, 'Stack Traceback (most recent call last):\n')
             info[-1] = 'Qt %s Message: %s\n' % (tstr, msg)
             _show_msg_with_info(icon, 'Qt %s Message' % tstr, info, info[-1])
-        QtCore.qInstallMsgHandler(_qt_msg_hook)
+        QtCore.qInstallMsgHandler(_qt_msg_hook)  # @UndefinedVariable
     elif _qt_version == 'PyQt5':
+        _TI = {QtCore.QtDebugMsg:    ('Debug',       QMessageBox.Information),
+               QtCore.QtInfoMsg:     ('Information', QMessageBox.Information),
+               QtCore.QtWarningMsg:  ('Warning',     QMessageBox.Warning),
+               QtCore.QtCriticalMsg: ('Critical',    QMessageBox.Critical),
+               QtCore.QtFatalMsg:    ('Fatal',       QMessageBox.Critical)}
         def _qt_msg_hook(mtype, context, msg):
-            _TI = {QtCore.QtDebugMsg:    ('Debug',       QMessageBox.Information),
-                   QtCore.QtInfoMsg:     ('Information', QMessageBox.Information),
-                   QtCore.QtWarningMsg:  ('Warning',     QMessageBox.Warning),
-                   QtCore.QtCriticalMsg: ('Critical',    QMessageBox.Critical),
-                   QtCore.QtFatalMsg:    ('Fatal',       QMessageBox.Critical)}
+            if QT5_WINDOWS_IGNORE_SETGEOMETRY_WARNING and mtype == QtCore.QtWarningMsg \
+               and msg.startswith('QWindowsWindow::setGeometry: Unable to set geometry'):
+                return
             tstr, icon = _TI[mtype]
             info = traceback.format_stack()
             if len(info) > 1:
