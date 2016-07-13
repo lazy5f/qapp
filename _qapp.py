@@ -85,7 +85,7 @@ class Application(QApplication):
     def __init__(self, *argc):
         super(Application, self).__init__(*argc)
         self._main_window = None
-        self._interactive_msg = True
+        self._interactive_msg = False
         self.sig_call_soon.connect(self._invoke_function)
     
     @QtCore.pyqtSlot(object, object)
