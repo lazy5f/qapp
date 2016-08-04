@@ -6,7 +6,7 @@ Helper for using PyQt4/5 (by byunghyun.ha@gmail.com)
 
 Usage example:  TODO!!!! Update!!!
 
-    import _qapp  # This should be first that other PyQt import
+    import _qapp  # In case of Qt 4, this should be first that other PyQt import
     
     from PyQt4 import QtGui
     
@@ -126,12 +126,14 @@ def call_soon(callback, *args):
 
 
 if sys.version_info >= (3, 4):  # Python 3.4
+    """
+    Supporting async functions using Qt's event loop
+    """
+    
     from asyncio import iscoroutine
 
     class Promise:
         """
-        Promise
-        
         TODO thread synchronization between resolve() and then()
         """
         
@@ -143,6 +145,12 @@ if sys.version_info >= (3, 4):  # Python 3.4
             if func:
                 call_soon(func, self.resolve)
         
+        def then(self, callback):
+            assert self._callback is None  # TODO Handle.
+            self._callback = callback
+            if self._result is not Promise.NO_RESULT:
+                call_soon(self._callback, self._result)
+        
         def resolve(self, result):
             assert self._result is Promise.NO_RESULT  # TODO Handle repetition.
             self._result = result
@@ -150,22 +158,20 @@ if sys.version_info >= (3, 4):  # Python 3.4
             if self._callback:
                 call_soon(self._callback, result)
         
-        def then(self, callback):
-            assert self._callback is None  # TODO Handle.
-            self._callback = callback
-            if self._result is not Promise.NO_RESULT:
-                call_soon(self._callback, self._result)
-        
         def __await__(self):
+            # NOTE This enables 'await Promise().'
             yield self
             assert self._result is not Promise.NO_RESULT
             return self._result
 
     class Task(Promise):
+        """
+        TODO Supporting 'start immediately' at __init__()??
+        """
     
         def __init__(self, coro):
-            assert iscoroutine(coro), repr(coro)
             super().__init__()
+            assert iscoroutine(coro), repr(coro)
             self._coro = coro
             call_soon(self._wakeup)
         
@@ -173,20 +179,16 @@ if sys.version_info >= (3, 4):  # Python 3.4
             try:
                 p = self._coro.send(None)
             except StopIteration as exc:
+                # This enables 'create_task(async func).then(..).'
                 self.resolve(exc.value)
             else:
                 if isinstance(p, Promise):
                     p.then(self._wakeup)
                 else:
                     assert False
-
+    
     def create_task(coro):
         return Task(coro)
-    
-    def cy_public_async(fn):
-        def _wrapper(self, *args, **kwds):
-            create_task(fn(self, *args, **kwds))
-        return _wrapper
 
 
 # Shortcut for displaying message dialogs.
