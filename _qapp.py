@@ -1,5 +1,5 @@
 """
-Helper for using PyQt4/5 (by byunghyun.ha@gmail.com)
+Helper for using PyQt5 (byunghyun.ha@gmail.com)
 
   When imported, Python exceptions and Qt messages will be hooked and displayed
     using Qt message box.
@@ -43,33 +43,17 @@ TODO Hooking exception at Python secondary threads?
 
 import sys, os, traceback
 
-if sys.version_info < (3, 0):  # Python 2
-    """
-    Set to use QVariant version 2. If not, code should be like as follows:
-        x = QtCore.QSettings(org, app).value(key, default)
-        if _qt_version == 'PyQt4':
-            x = x.toPyObject()
-    NOTE This should be earlier than any PyQt import.
-    """
-    import sip; sip.setapi('QVariant', 2)
+from PyQt5 import QtCore, uic
+from PyQt5.QtCore import Qt
+from PyQt5.QtWidgets import QApplication, QMessageBox
+
 
 # TODO Is this proper way of supporting Ctrl-C?
 import signal
 signal.signal(signal.SIGINT, signal.SIG_DFL)
 
-try:
-    from PyQt4 import QtCore, uic
-    from PyQt4.QtCore import Qt
-    from PyQt4.QtGui import QApplication, QMessageBox
-    _qt_version = 'PyQt4'
-except ImportError:
-    from PyQt5 import QtCore, uic
-    from PyQt5.QtCore import Qt
-    from PyQt5.QtWidgets import QApplication, QMessageBox
-    _qt_version = 'PyQt5'
 
-
-# This is for preventing warning message: QWindowsWindow::setGeometry: Unable...
+# This is for preventing warning message: "QWindowsWindow::setGeometry: Unable..."
 QT5_WINDOWS_IGNORE_SETGEOMETRY_WARNING = True
 
 
@@ -86,7 +70,7 @@ class Application(QApplication):
         super(Application, self).__init__(*argc)
         self._main_window = None
         self._interactive_msg = False
-        self.sig_call_soon.connect(self._invoke_function)
+        self.sig_call_soon.connect(self._invoke_function, Qt.QueuedConnection)
     
     @QtCore.pyqtSlot(object, object)
     def _invoke_function(self, callback, args):
@@ -131,28 +115,31 @@ if sys.version_info >= (3, 4):  # Python 3.4
     """
     
     from asyncio import iscoroutine
-
+    
     class Promise:
         """
-        TODO thread synchronization between resolve() and then()
+        TODO!! Is it possible to exploit Python's native async facility (e.g.
+          Future and generator) instead of employing Promise??
+        
+        TODO thread synchronization between resolve() and then()??
         """
         
-        NO_RESULT = object()
+        __NO_RESULT = object()
         
         def __init__(self, func=None):
             self._callback = None
-            self._result = Promise.NO_RESULT
+            self._result = Promise.__NO_RESULT
             if func:
                 call_soon(func, self.resolve)
         
         def then(self, callback):
             assert self._callback is None  # TODO Handle.
             self._callback = callback
-            if self._result is not Promise.NO_RESULT:
+            if self._result is not Promise.__NO_RESULT:
                 call_soon(self._callback, self._result)
         
         def resolve(self, result):
-            assert self._result is Promise.NO_RESULT  # TODO Handle repetition.
+            assert self._result is Promise.__NO_RESULT  # TODO Handle repetition.
             self._result = result
             # Call callback.
             if self._callback:
@@ -161,19 +148,19 @@ if sys.version_info >= (3, 4):  # Python 3.4
         def __await__(self):
             # NOTE This enables 'await Promise().'
             yield self
-            assert self._result is not Promise.NO_RESULT
+            assert self._result is not Promise.__NO_RESULT
             return self._result
 
     class Task(Promise):
-        """
-        TODO Supporting 'start immediately' at __init__()??
-        """
     
-        def __init__(self, coro):
+        def __init__(self, coro, start_immediately=False):
             super().__init__()
             assert iscoroutine(coro), repr(coro)
             self._coro = coro
-            call_soon(self._wakeup)
+            if start_immediately:
+                self._wakeup()
+            else:
+                call_soon(self._wakeup)
         
         def _wakeup(self, _result=None):
             try:
@@ -187,8 +174,17 @@ if sys.version_info >= (3, 4):  # Python 3.4
                 else:
                     assert False
     
-    def create_task(coro):
-        return Task(coro)
+    create_task = Task
+    
+    async def resolve_all(A):  # TODO Supporting generator?
+        """
+        A: list of coroutines or Promise's
+        """
+        A1 = [a if isinstance(a, Promise) else create_task(a, False) for a in A]
+        R = []  # return values
+        for a1 in A1:
+            R.append(await a1)
+        return R
 
 
 # Shortcut for displaying message dialogs.
@@ -337,39 +333,23 @@ def install_message_hooks():
     # Install Qt message hook. (NOTE QtSystemMsg is ignored because it is identical
     #   to QtCriticalMsg and there is no way to distinguish them at this moment.
     #   Yet, I don't know which one is better to be displayed to users.)
-    if _qt_version == 'PyQt4':
-        _TI = {QtCore.QtDebugMsg:    ('Debug',    QMessageBox.Information),
-               QtCore.QtWarningMsg:  ('Warning',  QMessageBox.Warning),
-               QtCore.QtCriticalMsg: ('Critical', QMessageBox.Critical),
-               QtCore.QtFatalMsg:    ('Fatal',    QMessageBox.Critical)}
-        def _qt_msg_hook(mtype, msg):
-            tstr, icon = _TI[mtype]
-            info = traceback.format_stack()
-            if len(info) > 1:
-                info.insert(0, 'Stack Traceback (most recent call last):\n')
-            info[-1] = 'Qt %s Message: %s\n' % (tstr, msg)
-            _show_msg_with_info(icon, 'Qt %s Message' % tstr, info, info[-1])
-        QtCore.qInstallMsgHandler(_qt_msg_hook)  # @UndefinedVariable
-    elif _qt_version == 'PyQt5':
-        _TI = {QtCore.QtDebugMsg:    ('Debug',       QMessageBox.Information),
-               QtCore.QtInfoMsg:     ('Information', QMessageBox.Information),
-               QtCore.QtWarningMsg:  ('Warning',     QMessageBox.Warning),
-               QtCore.QtCriticalMsg: ('Critical',    QMessageBox.Critical),
-               QtCore.QtFatalMsg:    ('Fatal',       QMessageBox.Critical)}
-        def _qt_msg_hook(mtype, context, msg):
-            if QT5_WINDOWS_IGNORE_SETGEOMETRY_WARNING and mtype == QtCore.QtWarningMsg \
-               and msg.startswith('QWindowsWindow::setGeometry: Unable to set geometry'):
-                return
-            tstr, icon = _TI[mtype]
-            info = traceback.format_stack()
-            if len(info) > 1:
-                info.insert(0, 'Stack Traceback (most recent call last):\n')
-            args = (tstr, msg, context.file, context.line, context.function)
-            info[-1] = 'Qt %s Message: %s (%s:%u, %s)\n' % args
-            _show_msg_with_info(icon, 'Qt %s Message' % tstr, info, info[-1])
-        QtCore.qInstallMessageHandler(_qt_msg_hook)
-    else:
-        assert False, 'It does not make sense.'
+    _TI = {QtCore.QtDebugMsg:    ('Debug',       QMessageBox.Information),
+           QtCore.QtInfoMsg:     ('Information', QMessageBox.Information),
+           QtCore.QtWarningMsg:  ('Warning',     QMessageBox.Warning),
+           QtCore.QtCriticalMsg: ('Critical',    QMessageBox.Critical),
+           QtCore.QtFatalMsg:    ('Fatal',       QMessageBox.Critical)}
+    def _qt_msg_hook(mtype, context, msg):
+        if QT5_WINDOWS_IGNORE_SETGEOMETRY_WARNING and mtype == QtCore.QtWarningMsg \
+           and msg.startswith('QWindowsWindow::setGeometry: Unable to set geometry'):
+            return
+        tstr, icon = _TI[mtype]
+        info = traceback.format_stack()
+        if len(info) > 1:
+            info.insert(0, 'Stack Traceback (most recent call last):\n')
+        args = (tstr, msg, context.file, context.line, context.function)
+        info[-1] = 'Qt %s Message: %s (%s:%u, %s)\n' % args
+        _show_msg_with_info(icon, 'Qt %s Message' % tstr, info, info[-1])
+    QtCore.qInstallMessageHandler(_qt_msg_hook)
 
 install_message_hooks()
 
