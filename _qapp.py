@@ -4,22 +4,28 @@ Helper for using PyQt5 (byunghyun.ha@gmail.com)
   When imported, Python exceptions and Qt messages will be hooked and displayed
     using Qt message box.
 
-Usage example:  TODO!!!! Update!!!
+  TODO Hooking exception at Python secondary threads?
 
-    import _qapp  # In case of Qt 4, this should be first that other PyQt import
+Usage example (TODO Update):
+
+    from PyQt5 import QtWidgets
+    import _qapp
+
+    class MainFrame(QtWidgets.QMainWindow):
     
-    from PyQt4 import QtGui
-    
-    class MainFrame(QtGui.QMainWindow)
         SETTING_STR = ('org', 'app')
+    
         def __init__(self):
             super().__init__()
-            _qapp.setup_ui_from_design(self, 'design.ui', 'res')
+            _qapp.setup_ui_from_design(self, 'res/design.ui')
             self.ui.xxx
             _qapp.setting.restore_frame_state(self, *self.SETTING_STR)
+            self.show()
+        
         def closeEvent(self, e):
             _qapp.setting.save_frame_state(self, *self.SETTING_STR)
             super().closeEvent(e)
+        
         def on_open(self):
             with _qapp.setting('last-open-file', '', *self.SETTING_STR) as lof:
                 args = [None, 'Choose File', lof.value, '*.xxx']
@@ -27,17 +33,16 @@ Usage example:  TODO!!!! Update!!!
                 if not path:
                     return
                 lof.value = path
+        
         def on_create_multiple_widget(self):
             with _qapp.hourglass():
-                ui_design = load_ui_design('xxx.ui', 'yyy')
-                w1, w2 = ui_design(self), ui_design(self)
+                ui_design = _qapp.load_ui_design('res/yyy.ui')
+                w1, w2 = ui_design(self), ui_design(None)
+        
         def show_message(self, title, msg):
             _qapp.msg_info(self, title, msg)  # C.f. NOTE below.
     
     _qapp.exec_(MainFrame())
-
-
-TODO Hooking exception at Python secondary threads?
 """
 
 
@@ -196,34 +201,48 @@ msg_question = QMessageBox.question
 msg_warning = QMessageBox.warning
 
 
-def setup_ui_from_design(w, ui_file, folder='.', debug=False):
+def setup_ui_from_design(w, ui_path, debug=False):
     # Change working directory, because uic supports relative path only and
     #   resource files are not handled correctly without doing it.
-    old_path = os.getcwd()
-    os.chdir(folder)
+    head, file_name = os.path.split(ui_path)
+    if head:
+        old_path = os.getcwd()
+        os.chdir(head)
+    
     # Load and set up UI.
-    w.ui = uic.loadUiType(ui_file)[0]()
+    w.ui = uic.loadUiType(file_name)[0]()
     w.ui.setupUi(w)  # NOTE Here, resources are loaded.
     if debug:
-        uic.compileUi(ui_file, sys.stdout)  # Print UI code.
+        uic.compileUi(file_name, sys.stdout)  # Print UI code.
+    
     # Change working directory back.
-    os.chdir(old_path)
+    if head:
+        os.chdir(old_path)
 
-def load_ui_design(ui_file, folder='', debug=False):
-    # CAUTION Resource cannot be loaded correctly (c.f. NOTE above).
-    def factory(form_class, qt_base_class, parent):
+def load_ui_design(ui_path, debug=False):
+    head, file_name = os.path.split(ui_path)
+    if head:
+        old_path = os.getcwd()
+        os.chdir(head)
+    ui_folder = os.getcwd()
+    
+    form_class, qt_base_class = uic.loadUiType(file_name)
+    if debug:
+        uic.compileUi(file_name, sys.stdout)  # Print UI code.
+    
+    if head:
+        os.chdir(old_path)
+    
+    def _factory(parent):
+        old_path = os.getcwd()
+        os.chdir(ui_folder)
         w = qt_base_class(parent)
         w.ui = form_class()
         w.ui.setupUi(w)
+        os.chdir(old_path)
         return w
-    ui_path = os.path.join(os.path.dirname(os.path.realpath(__file__)), folder)
-    old_path = os.getcwd()
-    os.chdir(ui_path)
-    form_class, qt_base_class = uic.loadUiType(ui_file)
-    if debug:
-        uic.compileUi(ui_file, sys.stdout)  # Print UI code.
-    os.chdir(old_path)
-    return lambda parent: factory(form_class, qt_base_class, parent)
+    
+    return _factory
 
 
 class setting(object):
@@ -289,9 +308,10 @@ class hourglass(object):
 
 
 def install_message_hooks():
-    # function for signaling app to show message box.
-    def _show_msg_with_info(icon, title, info, msg):
+    # Function for signaling app to show message box.
+    def _show_info_msg_box(icon, title, info, msg):
         sys.stderr.write(''.join(info))
+        
         # Here, QMetaObject.invokeMethod() is used to call app's slot for showing
         #   message dialog. It is because i) Qt does not allow to show GUI at
         #   secondary threads and ii) invokeMethod() can suspend secondary thread.
@@ -306,15 +326,19 @@ def install_message_hooks():
             # Get connection type to invoke app's slot. When calling object lives
             #   in different thread than app, it will be BlockingQueuedConnection
             #   and, as a result, the calling thread is suspended until message
-            #   dialog ends. But that connection type can possibly cause deadlock if
-            #   it is used for calling at the same thread. So DirectConnection is
-            #   used in that case.
-            ct = Qt.DirectConnection if (QtCore.QThread.currentThread() == qapp.thread()) \
-                                     else Qt.BlockingQueuedConnection
+            #   dialog ends. But that connection type can possibly cause deadlock
+            #   if it is used for calling at the same thread. So DirectConnection
+            #   is used in that case.
+            if (QtCore.QThread.currentThread() == qapp.thread()):
+                ct = Qt.DirectConnection
+            else:
+                ct = Qt.BlockingQueuedConnection
+            
             # Invoke qapp._show_message().
             QtCore.QMetaObject.invokeMethod(qapp, '_show_message', ct,
                 QtCore.Q_ARG(object, icon), QtCore.Q_ARG(object, title),
                 QtCore.Q_ARG(object, info), QtCore.Q_ARG(object, msg))
+    
     # Install Python exception hook.
     #   NOTE To my regret, exception hook does not work at Python secondary
     #     threads (as of Jan 2016): https://bugs.python.org/issue1230540. 
@@ -328,8 +352,10 @@ def install_message_hooks():
         if len(tb) > 1:
             info.append('Stack Traceback for the above exception:\n')
             info.extend(traceback.format_stack()[:-1])
-        _show_msg_with_info(QMessageBox.Critical, 'Python Exception', info, msg)
+        _show_info_msg_box(QMessageBox.Critical, 'Python Exception', info, msg)
+    
     sys.excepthook, __py_exc_hook0 = _py_exc_hook, sys.excepthook
+    
     # Install Qt message hook. (NOTE QtSystemMsg is ignored because it is identical
     #   to QtCriticalMsg and there is no way to distinguish them at this moment.
     #   Yet, I don't know which one is better to be displayed to users.)
@@ -338,17 +364,23 @@ def install_message_hooks():
            QtCore.QtWarningMsg:  ('Warning',     QMessageBox.Warning),
            QtCore.QtCriticalMsg: ('Critical',    QMessageBox.Critical),
            QtCore.QtFatalMsg:    ('Fatal',       QMessageBox.Critical)}
+
     def _qt_msg_hook(mtype, context, msg):
-        if QT5_WINDOWS_IGNORE_SETGEOMETRY_WARNING and mtype == QtCore.QtWarningMsg \
-           and msg.startswith('QWindowsWindow::setGeometry: Unable to set geometry'):
-            return
+        # Build arguments.
         tstr, icon = _TI[mtype]
         info = traceback.format_stack()
         if len(info) > 1:
             info.insert(0, 'Stack Traceback (most recent call last):\n')
         args = (tstr, msg, context.file, context.line, context.function)
         info[-1] = 'Qt %s Message: %s (%s:%u, %s)\n' % args
-        _show_msg_with_info(icon, 'Qt %s Message' % tstr, info, info[-1])
+        
+        if QT5_WINDOWS_IGNORE_SETGEOMETRY_WARNING and mtype == QtCore.QtWarningMsg \
+           and msg.startswith('QWindowsWindow::setGeometry: Unable to set geometry'):
+            sys.stderr.write(info[-1])
+            return
+        
+        _show_info_msg_box(icon, 'Qt %s Message' % tstr, info, info[-1])
+    
     QtCore.qInstallMessageHandler(_qt_msg_hook)
 
 install_message_hooks()
