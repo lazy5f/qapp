@@ -78,9 +78,9 @@ class Application(QApplication):
         self.sig_call_soon.connect(self._invoke_function, Qt.QueuedConnection)
     
     @QtCore.pyqtSlot(object, object)
-    def _invoke_function(self, callback, args):
+    def _invoke_function(self, fn, args):
         try:
-            callback(*args)
+            fn(*args)
         except StopIteration:
             pass
     
@@ -110,8 +110,12 @@ def exec_(main_win=None, interactive_msg=True):
     sys.exit(qapp.exec_())
 
 
-def call_soon(callback, *args):
-    qapp.sig_call_soon.emit(callback, args)
+def call_soon(fn, *args):
+    """
+    Reserve fn(*args) call on primary thread. It is pushed into Qt's event queue
+      and is called at the next event dispatch.
+    """
+    qapp.sig_call_soon.emit(fn, args)
 
 
 if sys.version_info >= (3, 4):  # Python 3.4
@@ -123,6 +127,9 @@ if sys.version_info >= (3, 4):  # Python 3.4
     
     class Promise:
         """
+        CAUTION With call_then_immediately as True, primary thread execution
+          is not guaranteed.
+          
         TODO!! Is it possible to exploit Python's native async facility (e.g.
           Future and generator) instead of employing Promise??
         
@@ -132,26 +139,33 @@ if sys.version_info >= (3, 4):  # Python 3.4
         __NO_RESULT = object()
         
         def __init__(self, func=None):
-            self._callback = None
+            self._then_fn = None
             self._result = Promise.__NO_RESULT
             if func:
                 call_soon(func, self.resolve)
         
-        def then(self, callback):
-            assert self._callback is None  # TODO Handle.
-            self._callback = callback
+        def then(self, then_fn, call_then_immediately=False):
+            assert self._then_fn is None  # TODO Handle.
+            self._then_fn = then_fn
             if self._result is not Promise.__NO_RESULT:
-                call_soon(self._callback, self._result)
+                if call_then_immediately:
+                    self._then_fn(self._result)
+                else:
+                    call_soon(self._then_fn, self._result)
         
-        def resolve(self, result):
+        def resolve(self, result, call_then_immediately=False):
             assert self._result is Promise.__NO_RESULT  # TODO Handle repetition.
             self._result = result
-            # Call callback.
-            if self._callback:
-                call_soon(self._callback, result)
+            # Call then_callback.
+            if self._then_fn:
+                if call_then_immediately:
+                    self._then_fn(result)
+                else:
+                    call_soon(self._then_fn, result)
         
         def __await__(self):
-            # NOTE This enables 'await Promise().'
+            # NOTE This along with _wakeup()'s handling of Promise instance
+            #   enables 'await Promise()'.
             yield self
             assert self._result is not Promise.__NO_RESULT
             return self._result
@@ -159,6 +173,10 @@ if sys.version_info >= (3, 4):  # Python 3.4
     class Task(Promise):
     
         def __init__(self, coro, start_immediately=False):
+            """
+            CAUTION With start_immediately as True, primary thread execution is
+              not guaranteed.
+            """
             super().__init__()
             assert iscoroutine(coro), repr(coro)
             self._coro = coro
@@ -174,7 +192,7 @@ if sys.version_info >= (3, 4):  # Python 3.4
                 # This enables 'create_task(async func).then(..).'
                 self.resolve(exc.value)
             else:
-                if isinstance(p, Promise):
+                if isinstance(p, Promise):  # NOTE C.f. Promise.__await__().
                     p.then(self._wakeup)
                 else:
                     assert False
@@ -194,7 +212,7 @@ if sys.version_info >= (3, 4):  # Python 3.4
 
 # Shortcut for displaying message dialogs.
 #   NOTE Also consider: QtCore's qDebug, qWarning, qCritical, qFatal, qInfo (Qt5).
-#    They will provide call stack trace via _show_msg_with_info() below.
+#     They will provide call stack trace via _show_msg_with_info() below.
 msg_info = QMessageBox.information
 msg_critical = QMessageBox.critical
 msg_question = QMessageBox.question
@@ -267,19 +285,24 @@ class setting(object):
     @staticmethod
     def restore_widget_geom(w, key, org, app='', _d=QtCore.QByteArray()):
         w.restoreGeometry(QtCore.QSettings(org, app).value(key, _d))
+    
     @staticmethod
     def save_widget_geom(w, key, org, app=''):
         QtCore.QSettings(org, app).setValue(key, w.saveGeometry())
+    
     @staticmethod
     def restore_window_stat(w, key, org, app='', _d=QtCore.QByteArray()):
         w.restoreState(QtCore.QSettings(org, app).value(key, _d))
+    
     @staticmethod
     def save_window_stat(w, key, org, app=''):
         QtCore.QSettings(org, app).setValue(key, w.saveState())
+    
     @staticmethod
     def restore_frame_state(w, org, app=''):
         setting.restore_widget_geom(w, 'frame/geometry', org, app)
         setting.restore_window_stat(w, 'frame/state', org, app)
+    
     @staticmethod
     def save_frame_state(w, org, app=''):
         setting.save_widget_geom(w, 'frame/geometry', org, app)
