@@ -382,7 +382,7 @@ def install_message_hooks():
     # Install Qt message hook. (NOTE QtSystemMsg is ignored because it is identical
     #   to QtCriticalMsg and there is no way to distinguish them at this moment.
     #   Yet, I don't know which one is better to be displayed to users.)
-    _TI = {QtCore.QtDebugMsg:    ('Debug',       QMessageBox.Information),
+    _TI = {QtCore.QtDebugMsg:    ('Debug',       None),
            QtCore.QtInfoMsg:     ('Information', QMessageBox.Information),
            QtCore.QtWarningMsg:  ('Warning',     QMessageBox.Warning),
            QtCore.QtCriticalMsg: ('Critical',    QMessageBox.Critical),
@@ -402,7 +402,10 @@ def install_message_hooks():
             sys.stderr.write(info[-1])
             return
         
-        _show_info_msg_box(icon, 'Qt %s Message' % tstr, info, info[-1])
+        if icon:
+            _show_info_msg_box(icon, 'Qt %s Message' % tstr, info, info[-1])
+        else:  # debug message
+            sys.stdout.write(info[-1])
     
     QtCore.qInstallMessageHandler(_qt_msg_hook)
 
