@@ -3,8 +3,10 @@ Helper for using PyQt5 (byunghyun.ha@gmail.com)
 
   When imported, Python exceptions and Qt messages will be hooked and displayed
     using Qt message box.
+  
+  TODO Should quit when exception occurs in Qt slot.
 
-  TODO Hooking exception at Python secondary threads?
+  TODO?? Hooking exception at Python secondary threads
 
 Usage example (TODO Update):
 
